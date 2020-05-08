@@ -1,0 +1,141 @@
+---
+title: "Walmart Sales Prediction"
+author: "Ariel Li, Jiaying Du, Sylvie Pan"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# load the packages
+suppressMessages({
+  library(data.table)
+  library(dplyr)
+  library(tidyverse)
+  library(psych)
+  library(scales)
+  library(lubridate)
+  library(ggplot2) 
+  library(forecast) 
+  library(prophet) 
+})
+
+set.seed(42)
+```
+
+calendar.csv - Contains information about the dates on which the products are sold.
+sell_prices.csv - Contains information about the price of the products sold per store and date.
+sales_train_validation.csv - Contains the historical daily unit sales data per product and store [d_1 - d_1913].
+
+```{r}
+# read the data
+calendar <- fread('data/calendar.csv')
+price <- fread('data/sell_prices.csv')
+sales <- fread('data/sales_train_validation.csv')
+```
+
+```{r}
+head(calendar)
+head(price)
+```
+
+```{r}
+# train test split
+basic <- select(sales, 1:6)
+date <- select(sales, -1:-6)
+date_num <- dim(date)[2]
+test_size <- 28
+train_size <- date_num - 28
+train <- select(date, 1:all_of(train_size))
+test <- select(date, (all_of(train_size)+1):all_of(date_num))
+train <- cbind(basic, train)
+test <- cbind(basic, test)
+```
+
+The data range from 2011-01-29 to 2016-06-19.
+```{r}
+calendar$date <- as.Date(calendar$date, format='%Y-%m-%d')
+calendar %>% summarize(min_date=min(date), max_date=max(date))
+```
+
+The data range for the training data set is from 2011-01-29 to 2016-03-27, and the data range for the test set is from 2016-03-28 to 2016-04-24.
+```{r}
+train_date <- calendar$date[1:train_size]
+test_date <- calendar$date[(train_size+1):(train_size+28)]
+min(train_date)
+max(train_date)
+min(test_date)
+max(test_date)
+```
+
+In our dataset, we have 3 categories of 3049 items in 7 departments. Those items were sold in 10 stores of 3 states.
+```{r}
+# count unique item, dept, category, store, and state
+length(unique(train[['item_id']]))
+length(unique(train[['dept_id']]))
+length(unique(train[['cat_id']]))
+length(unique(train[['store_id']]))
+length(unique(train[['state_id']]))
+```
+
+```{r}
+(top_item <- head(count(train, item_id, sort = TRUE), 5))
+(top_dept <- count(train, dept_id, sort = TRUE))
+(top_cat <- count(train, cat_id, sort = TRUE))
+(top_store <- count(train, store_id, sort = TRUE))
+(top_state <- count(train, state_id, sort = TRUE))
+```
+
+FOODS category and FOODS_3 department have the largest number of products.
+```{r}
+ggplot(train, aes(x=dept_id)) +
+  geom_bar(fill='steelblue') + 
+  ggtitle('Item Count by Department') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(train, aes(x=cat_id)) +
+  geom_bar(fill='steelblue') + 
+  ggtitle('Item Count by Category') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+There are 4 stores in CA, 3 in TX, and 3 in WI.
+```{r}
+(store_state <- train %>% group_by(state_id) %>% summarize(unique_stores=n_distinct(store_id)))
+
+ggplot(store_state, aes(state_id, unique_stores)) +
+  geom_col(fill='steelblue') + 
+  ggtitle('Number of Stores by State') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# melt sales
+train <- melt(train, measure.vars=patterns('^d_'), variable.name='d', value.name='sales')
+test <- melt(test, measure.vars=patterns('^d_'), variable.name='d', value.name='sales')
+head(train)
+head(test)
+```
+
+```{r}
+# join tables
+train %>% 
+  left_join(calendar, by = 'd') %>% 
+  left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk'))
+
+test %>% 
+  left_join(calendar, by = 'd') %>% 
+  left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk'))
+```
+
+```{r}
+write.csv(train, 'train.csv')
+write.csv(test, 'test.csv')
+```
+
+
+
+
