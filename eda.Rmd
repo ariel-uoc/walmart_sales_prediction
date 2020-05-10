@@ -116,29 +116,29 @@ ggplot(store_state, aes(state_id, unique_stores)) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
-# ```{r}
-# # melt sales
-# train <- melt(train, measure.vars=patterns('^d_'), variable.name='d', value.name='sales')
-# test <- melt(test, measure.vars=patterns('^d_'), variable.name='d', value.name='sales')
-# head(train)
-# head(test)
-# ```
+<!-- # ```{r} -->
+<!-- # # melt sales -->
+<!-- # train <- melt(train, measure.vars=patterns('^d_'), variable.name='d', value.name='sales') -->
+<!-- # test <- melt(test, measure.vars=patterns('^d_'), variable.name='d', value.name='sales') -->
+<!-- # head(train) -->
+<!-- # head(test) -->
+<!-- # ``` -->
 
-# ```{r}
-# # join tables
-# train %>% 
-#   left_join(calendar, by = 'd') %>% 
-#   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk'))
+<!-- # ```{r} -->
+<!-- # # join tables -->
+<!-- # train %>%  -->
+<!-- #   left_join(calendar, by = 'd') %>%  -->
+<!-- #   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk')) -->
 
-# test %>% 
-#   left_join(calendar, by = 'd') %>% 
-#   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk'))
-# ```
+<!-- # test %>%  -->
+<!-- #   left_join(calendar, by = 'd') %>%  -->
+<!-- #   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk')) -->
+<!-- # ``` -->
 
-# ```{r}
-# write.csv(train, 'train.csv')
-# write.csv(test, 'test.csv')
-# ```
+<!-- # ```{r} -->
+<!-- # write.csv(train, 'train.csv') -->
+<!-- # write.csv(test, 'test.csv') -->
+<!-- # ``` -->
 
 ```{r}
 # read the data
@@ -170,6 +170,31 @@ fig <- daily_sales_df %>%
   geom_line(color='#69b3a2') +
   geom_smooth(method='lm', formula=y~x, se=FALSE, size=0.5, color='gray20') +
   labs(x='Date', y='Sales', title='Daily Sales') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+### Sales by Item
+
+There are 3049 distinct items in the dataset. We will randomly selected 20 items to plot here.
+```{r}
+set.seed(42)
+random_items <- sample(unique(train$item_id), 20)
+
+item_sales_df <- train %>% 
+  filter(item_id %in% random_items) %>%
+  group_by(date, item_id) %>% 
+  summarize(item_sales=sum(sales))
+
+item_sales_df$date <- as.Date(item_sales_df$date)
+
+fig <- item_sales_df %>%
+  ggplot(aes(x=date, y=item_sales, col=item_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by Item') +
   scale_x_date(date_breaks='3 month', date_labels='%b %y') +
   theme_ipsum() +
   theme(axis.text.x=element_text(angle=45, hjust=1))
@@ -228,29 +253,6 @@ fig <- store_sales_df %>%
 ggplotly(fig, dynamicTicks=TRUE)
 ```
 
-```{r}
-stores <- unique(train$store_id)
-
-for(s in stores){
-  store_i_sales_df <- train %>% 
-    filter(store_id==s) %>%
-    group_by(date) %>% 
-    summarize(store_sales=sum(sales))
-  
-  store_i_sales_df$date <- as.Date(store_i_sales_df$date)
-  
-  fig <- store_i_sales_df %>%
-    ggplot(aes(x=date, y=store_sales)) +
-    geom_line() +
-    labs(x='Date', y='Sales', title=paste('Daily Sales', s)) +
-    scale_x_date(date_breaks='3 month', date_labels='%b %y') +
-    theme_ipsum() +
-    theme(axis.text.x=element_text(angle=45, hjust=1))
-  
-  ggplotly(fig, dynamicTicks=TRUE)
-}
-```
-
 
 ### Sales by State
 ```{r}
@@ -267,4 +269,127 @@ fig <- state_sales_df %>%
 
 ggplotly(fig, dynamicTicks=TRUE)
 ```
+
+
+## Price
+
+### Price by Item
+
+There are 3049 distinct items in the dataset. We will randomly selected 20 items to plot here.
+```{r}
+set.seed(42)
+random_items <- sample(unique(train$item_id), 20)
+
+item_price_df <- train %>% 
+  filter(item_id %in% random_items) %>%
+  group_by(date, item_id) %>% 
+  summarize(item_price=mean(sell_price))
+
+item_price_df$date <- as.Date(item_price_df$date)
+
+fig <- item_price_df %>%
+  ggplot(aes(x=date, y=item_price, col=item_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Item Daily Average Price') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Department
+```{r}
+dept_price_df <- train %>% group_by(date, dept_id) %>% summarize(dept_price=mean(sell_price, 
+na.rm=TRUE))
+
+dept_price_df$date <- as.Date(dept_price_df$date)
+
+fig <- dept_price_df %>%
+  ggplot(aes(x=date, y=dept_price, col=dept_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Department Daily Average Price') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Category
+```{r}
+cat_price_df <- train %>% group_by(date, cat_id) %>% summarize(cat_price=mean(sell_price, 
+na.rm=TRUE))
+
+cat_price_df$date <- as.Date(cat_price_df$date)
+
+fig <- cat_price_df %>%
+  ggplot(aes(x=date, y=cat_price, col=cat_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by Category') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Store
+```{r}
+store_price_df <- train %>% group_by(date, store_id) %>% summarize(store_price=mean(sell_price, 
+na.rm=TRUE))
+
+store_price_df$date <- as.Date(store_price_df$date)
+
+fig <- store_price_df %>%
+  ggplot(aes(x=date, y=store_price, col=store_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by Store') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by State
+```{r}
+state_price_df <- train %>% group_by(date, state_id) %>% summarize(state_price=mean(sell_price, 
+na.rm=TRUE))
+
+state_price_df$date <- as.Date(state_price_df$date)
+
+fig <- state_price_df %>%
+  ggplot(aes(x=date, y=state_price, col=state_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by State') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
