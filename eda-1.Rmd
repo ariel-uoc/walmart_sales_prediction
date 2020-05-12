@@ -1,0 +1,484 @@
+---
+title: "Walmart Sales Prediction"
+author: "Ariel Li, Jiaying Du, Sylvie Pan"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# load the packages
+suppressMessages({
+  library(data.table)
+  library(dplyr)
+  library(tidyverse)
+  library(psych)
+  library(scales)
+  library(lubridate)
+  library(ggplot2) 
+  library(ggthemes)
+  library(patchwork) # visualisation
+  library(RColorBrewer) # visualisation
+  library(corrplot)
+  library(scales)
+  library(hrbrthemes)
+  library(plotly)
+  library(forecast) 
+  library(prophet) 
+})
+
+set.seed(42)
+```
+
+### Data
+
+calendar.csv - Contains information about the dates on which the products are sold.
+sell_prices.csv - Contains information about the price of the products sold per store and date.
+sales_train_validation.csv - Contains the historical daily unit sales data per product and store [d_1 - d_1913].
+
+```{r}
+# read the data
+calendar <- fread('data/calendar.csv')
+price <- fread('data/sell_prices.csv')
+sales <- fread('data/sales_train_validation.csv')
+```
+
+```{r}
+head(calendar)
+head(price)
+```
+
+```{r}
+# train test split
+basic <- select(sales, 1:6)
+date <- select(sales, -1:-6)
+date_num <- dim(date)[2]
+test_size <- 28
+train_size <- date_num - 28
+train <- select(date, 1:all_of(train_size))
+test <- select(date, (all_of(train_size)+1):all_of(date_num))
+train <- cbind(basic, train)
+test <- cbind(basic, test)
+```
+
+The data range from 2011-01-29 to 2016-06-19.
+```{r}
+calendar$date <- as.Date(calendar$date, format='%Y-%m-%d')
+calendar %>% summarize(min_date=min(date), max_date=max(date))
+```
+
+The data range for the training data set is from 2011-01-29 to 2016-03-27, and the data range for the test set is from 2016-03-28 to 2016-04-24.
+```{r}
+train_date <- calendar$date[1:train_size]
+test_date <- calendar$date[(train_size+1):(train_size+28)]
+min(train_date)
+max(train_date)
+min(test_date)
+max(test_date)
+```
+
+In our dataset, we have 3 categories of 3049 items in 7 departments. Those items were sold in 10 stores of 3 states.
+```{r}
+# count unique item, dept, category, store, and state
+length(unique(train[['item_id']]))
+length(unique(train[['dept_id']]))
+length(unique(train[['cat_id']]))
+length(unique(train[['store_id']]))
+length(unique(train[['state_id']]))
+```
+
+There is 0 missing value. However, there are a lot of zero values, here we plot the distribution of zero percentages among all time series:
+```{r}
+sum(is.na(train))
+
+bar <- train %>% 
+  select(-contains("id")) %>% 
+  na_if(0) %>% 
+  is.na() %>% 
+  as_tibble() %>% 
+  mutate(sum = pmap_dbl(select(., everything()), sum)) %>% 
+  mutate(mean = sum/(ncol(train) - 1)) %>% 
+  select(sum, mean)
+  
+bar %>% 
+  ggplot(aes(mean)) +
+  geom_density(fill = "steelblue") +
+  scale_x_continuous(labels = scales::percent) +
+  coord_cartesian(xlim = c(0, 1)) +
+  theme_hc() +
+  theme(axis.text.y = element_blank()) +
+  labs(x = "", y = "", title = "Density for percentage of zero values - all time series")
+```
+
+```{r}
+(top_item <- head(count(train, item_id, sort = TRUE), 5))
+(top_dept <- count(train, dept_id, sort = TRUE))
+(top_cat <- count(train, cat_id, sort = TRUE))
+(top_store <- count(train, store_id, sort = TRUE))
+(top_state <- count(train, state_id, sort = TRUE))
+```
+
+FOODS category and FOODS_3 department have the largest number of products.
+```{r}
+ggplot(train, aes(x=dept_id,fill=dept_id)) +
+  geom_bar() + 
+  ggtitle('Item Count by Department') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+ggplot(train, aes(x=cat_id, fill=cat_id)) +
+  geom_bar() + 
+  ggtitle('Item Count by Category') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+There are 4 stores in CA, 3 in TX, and 3 in WI.
+```{r}
+(store_state <- train %>% group_by(state_id) %>% summarize(unique_stores=n_distinct(store_id)))
+
+ggplot(store_state, aes(state_id, unique_stores,fill=state_id)) +
+  geom_col() + 
+  ggtitle('Number of Stores by State') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+<!-- # ```{r} -->
+<!-- # # melt sales -->
+<!-- # train <- melt(train, measure.vars=patterns('^d_'), variable.name='d', value.name='sales') -->
+<!-- # test <- melt(test, measure.vars=patterns('^d_'), variable.name='d', value.name='sales') -->
+<!-- # head(train) -->
+<!-- # head(test) -->
+<!-- # ``` -->
+
+<!-- # ```{r} -->
+<!-- # # join tables -->
+<!-- # train %>%  -->
+<!-- #   left_join(calendar, by = 'd') %>%  -->
+<!-- #   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk')) -->
+
+<!-- # test %>%  -->
+<!-- #   left_join(calendar, by = 'd') %>%  -->
+<!-- #   left_join(price, by = c('store_id', 'item_id', 'wm_yr_wk')) -->
+<!-- # ``` -->
+
+<!-- # ```{r} -->
+<!-- # write.csv(train, 'train.csv') -->
+<!-- # write.csv(test, 'test.csv') -->
+<!-- # ``` -->
+
+```{r}
+# read the data
+train <- fread('data/train.csv')
+test <- fread('data/test.csv')
+```
+
+```{r}
+head(train)
+head(test)
+```
+
+## Sales
+
+### General Sales
+We can see an upward trend from 2011 to 2016. We can also observe seasonality with annual peaks around September and October, and a dip on Christmas every year when all stores closed. 
+```{r}
+daily_sales_df <- train %>% group_by(date) %>% summarize(daily_sales=sum(sales))
+daily_sales_df$date <- as.Date(daily_sales_df$date)
+head(daily_sales_df)
+```
+
+```{r}
+fig <- daily_sales_df %>%
+  ggplot(aes(x=date, y=daily_sales, group=1)) +
+  geom_area(fill='#69b3a2', alpha=0.5) +
+  geom_line(color='#69b3a2') +
+  geom_smooth(method='lm', formula=y~x, se=FALSE, size=0.5, color='gray20') +
+  labs(x='Date', y='Sales', title='Daily Sales') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+### Sales by Item
+
+There are 3049 distinct items in the dataset. We will randomly selected 20 items to plot here.
+```{r}
+set.seed(42)
+random_items <- sample(unique(train$item_id), 20)
+
+item_sales_df <- train %>% 
+  filter(item_id %in% random_items) %>%
+  group_by(date, item_id) %>% 
+  summarize(item_sales=sum(sales))
+
+item_sales_df$date <- as.Date(item_sales_df$date)
+
+fig <- item_sales_df %>%
+  ggplot(aes(x=date, y=item_sales, col=item_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by Item') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Sales by Department
+```{r}
+dept_sales_df <- train %>% group_by(date, dept_id) %>% summarize(dept_sales=sum(sales))
+dept_sales_df$date <- as.Date(dept_sales_df$date)
+
+fig <- dept_sales_df %>%
+  ggplot(aes(x=date, y=dept_sales, col=dept_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by Department') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Sales by Category
+```{r}
+cat_sales_df <- train %>% group_by(date, cat_id) %>% summarize(cat_sales=sum(sales))
+cat_sales_df$date <- as.Date(cat_sales_df$date)
+
+fig <- cat_sales_df %>%
+  ggplot(aes(x=date, y=cat_sales, col=cat_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by Product Category') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+### Sales by Store
+```{r}
+store_sales_df <- train %>% group_by(date, store_id) %>% summarize(store_sales=sum(sales))
+store_sales_df$date <- as.Date(store_sales_df$date)
+
+fig <- store_sales_df %>%
+  ggplot(aes(x=date, y=store_sales, col=store_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by Store') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Sales by State
+```{r}
+state_sales_df <- train %>% group_by(date, state_id) %>% summarize(state_sales=sum(sales))
+state_sales_df$date <- as.Date(state_sales_df$date)
+
+fig <- state_sales_df %>%
+  ggplot(aes(x=date, y=state_sales, col=state_id)) +
+  geom_line() +
+  labs(x='Date', y='Sales', title='Daily Sales by State') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+## Price
+
+### Price by Item
+
+There are 3049 distinct items in the dataset. We will randomly selected 20 items to plot here.
+```{r}
+set.seed(42)
+random_items <- sample(unique(train$item_id), 20)
+
+item_price_df <- train %>% 
+  filter(item_id %in% random_items) %>%
+  group_by(date, item_id) %>% 
+  summarize(item_price=mean(sell_price))
+
+item_price_df$date <- as.Date(item_price_df$date)
+
+fig <- item_price_df %>%
+  ggplot(aes(x=date, y=item_price, col=item_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Item Daily Average Price') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Department
+```{r}
+dept_price_df <- train %>% group_by(date, dept_id) %>% summarize(dept_price=mean(sell_price, 
+na.rm=TRUE))
+
+dept_price_df$date <- as.Date(dept_price_df$date)
+
+fig <- dept_price_df %>%
+  ggplot(aes(x=date, y=dept_price, col=dept_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Department Daily Average Price') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Category
+```{r}
+cat_price_df <- train %>% group_by(date, cat_id) %>% summarize(cat_price=mean(sell_price, 
+na.rm=TRUE))
+
+cat_price_df$date <- as.Date(cat_price_df$date)
+
+fig <- cat_price_df %>%
+  ggplot(aes(x=date, y=cat_price, col=cat_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by Category') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by Store
+```{r}
+store_price_df <- train %>% group_by(date, store_id) %>% summarize(store_price=mean(sell_price, 
+na.rm=TRUE))
+
+store_price_df$date <- as.Date(store_price_df$date)
+
+fig <- store_price_df %>%
+  ggplot(aes(x=date, y=store_price, col=store_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by Store') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+
+### Price by State
+```{r}
+state_price_df <- train %>% group_by(date, state_id) %>% summarize(state_price=mean(sell_price, 
+na.rm=TRUE))
+
+state_price_df$date <- as.Date(state_price_df$date)
+
+fig <- state_price_df %>%
+  ggplot(aes(x=date, y=state_price, col=state_id)) +
+  geom_line() +
+  labs(x='Date', y='Price', title='Daily Average Price by State') +
+  scale_x_date(date_breaks='3 month', date_labels='%b %y') +
+  theme_ipsum() +
+  theme(axis.text.x=element_text(angle=45, hjust=1))
+
+ggplotly(fig, dynamicTicks=TRUE)
+```
+
+## Calendar
+
+### Days with Events
+In our calendar coverage (i.e. training + validation + evaluation range) about 8% of days have a special event.
+```{r}
+p1 <- calendar %>% 
+  select(date, event_type_1) %>% 
+  count(event = event_type_1!='') %>% 
+  add_tally(n, name = "total") %>% 
+  mutate(perc = n/total) %>% 
+  ggplot(aes(event, perc, fill = event)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = c("grey70", "red")) +
+  theme_hc() +
+  theme(legend.position = "none") +
+  labs(x = "", y = "", title = "Days with Events")
+
+ggplotly(p1, dynamicTicks=TRUE)
+```
+
+### Type of Events
+Of these events, about 1/3 are Religious (e.g. Orthodox Christmas) and 1/3 are National Holidays (e.g. Independence Day). The remaining third is again split into 2/3 Cultural (e.g. Valentines Day) and 1/3 Sporting events (e.g. SuperBowl).
+```{r}
+p2 <- calendar %>% 
+  filter(event_type_1!='') %>% 
+  select(date, event_type_1) %>% 
+  count(event_type_1) %>% 
+  add_tally(n, name = "total") %>% 
+  mutate(perc = n/total) %>% 
+  ggplot(aes(reorder(event_type_1, n, FUN = min), perc, fill = event_type_1)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip() +
+  theme_hc() +
+  theme(legend.position = "none") +
+  labs(x = "", y = "", title = "Types of events")
+
+ggplotly(p2, dynamicTicks=TRUE)
+```
+
+### Days with SNAP purchases
+Looking at the percentage of days where purchases with SNAP food stamps are allowed in Walmart stores, we find that it is the exact same for each of the 3 states: 650 days or 33%.
+```{r}
+p3 <- calendar %>% 
+  select(date, starts_with("snap")) %>% 
+  pivot_longer(starts_with("snap"), names_to = "state", values_to = "snap") %>% 
+  mutate(state = str_sub(state, 6,7)) %>% 
+  group_by(state, snap) %>% 
+  summarise(n = n()) %>% 
+  add_tally(n, name = "total") %>% 
+  mutate(perc = n/total) %>% 
+  mutate(snap = as.logical(snap)) %>% 
+  ggplot(aes(snap, perc, fill = snap)) +
+  geom_col() +
+  scale_y_continuous(labels = scales::percent) +
+  theme_hc() +
+  facet_wrap(~ state, scales = "free") +
+  theme(legend.position = "none") +
+  labs(x = "", y = "", title = "Days with SNAP purchases")
+
+ggplotly(p3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
