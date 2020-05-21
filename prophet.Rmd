@@ -1,0 +1,198 @@
+---
+title: "Walmart Sales Prediction - Prophet"
+author: "Jiaying Du"
+date: "5/19/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# load the packages
+suppressMessages({
+  library(dplyr)
+  library(tidyverse)
+  library(psych)
+  library(scales)
+  library(data.table)
+  library(fastDummies)
+  library(xts)
+  library(xtsExtra)
+  library(seasonal)
+  library(tseries)
+  library(TSA)
+  library(lubridate)
+  library(ggplot2) 
+  library(ggthemes)
+  library(patchwork)
+  library(RColorBrewer)
+  library(hrbrthemes)
+  library(plotly)
+  library(forecast) 
+  library(prophet) 
+  library(Metrics)
+})
+
+set.seed(42)
+```
+
+```{r}
+# read the data
+ca_train <- fread('data/ca_train.csv')
+ca_test <- fread('data/ca_test.csv')
+head(ca_train)
+head(ca_test)
+```
+
+```{r}
+prophet_ca_train <- ca_train %>%
+  select(date, total_sales)
+
+colnames(prophet_ca_train) <- c('ds', 'y')
+```
+
+## Base Model
+
+```{r}
+m1 <- prophet(prophet_ca_train, daily.seasonality=TRUE)
+```
+
+```{r}
+future <- make_future_dataframe(m1, periods=60)
+tail(future)
+
+forecast1 <- predict(m1, future)
+tail(forecast1[c('ds', 'yhat', 'yhat_lower', 'yhat_upper')])
+```
+
+```{r}
+plot(m1, forecast1)
+```
+
+
+```{r}
+dyplot.prophet(m1, forecast1)
+```
+
+```{r}
+prophet_plot_components(m1, forecast1)
+```
+
+```{r}
+result1 <- data.frame('pred'=tail(forecast1$yhat, 60), 'actual'=ca_test$total_sales)
+result1
+```
+
+```{r}
+# rmse
+(rmse1 <- sqrt(mean((ca_test$total_sales - tail(forecast1$yhat, 60))^2)))
+
+# mase
+(mase1 <- mase(ca_test$total_sales, tail(forecast1$yhat, 60)))
+
+# mape
+(mape1 <- mape(ca_test$total_sales, tail(forecast1$yhat, 60)))
+```
+
+## Model Event
+```{r}
+calendar <- fread('data/calendar.csv')
+head(calendar)
+```
+
+```{r}
+calendar$date <- as.Date(calendar$date)
+```
+
+```{r}
+holiday <- data_frame(
+  holiday = 'snap_ca',
+  ds = (calendar %>%
+    filter(snap_CA==1) %>%
+    select(date))$date,
+  lower_window = 0,
+  upper_window = 1
+)
+
+head(holiday)
+```
+
+```{r}
+events1 <- unique(calendar$event_name_1)
+events2 <- unique(calendar$event_name_2)
+events <- unique(c(events1, events2))
+events <- events[events!='']
+events
+```
+
+```{r}
+for (event in events){
+  event_date <- data_frame(
+  holiday = event,
+  ds = (calendar %>%
+    filter(event_name_1==event|event_name_2==event) %>%
+    select(date))$date,
+  lower_window = 0,
+  upper_window = 1
+  )
+  
+  holiday <- bind_rows(holiday, event_date)
+}
+
+head(holiday)
+```
+
+```{r}
+m2 <- prophet(prophet_ca_train, holidays=holiday, daily.seasonality=TRUE)
+forecast2 <- predict(m2, future)
+tail(forecast2[c('ds', 'yhat', 'yhat_lower', 'yhat_upper')])
+```
+
+```{r}
+plot(m2, forecast2)
+```
+
+```{r}
+plot(m2, forecast2) + add_changepoints_to_plot(m2)
+```
+
+```{r}
+dyplot.prophet(m2, forecast2)
+```
+
+```{r}
+prophet_plot_components(m2, forecast2)
+```
+
+```{r}
+result2 <- data.frame('pred'=tail(forecast2$yhat, 60), 'actual'=ca_test$total_sales)
+result2
+```
+
+```{r}
+# rmse
+(rmse2 <- sqrt(mean((ca_test$total_sales - tail(forecast2$yhat, 60))^2)))
+
+# mase
+(mase2 <- mase(ca_test$total_sales, tail(forecast2$yhat, 60)))
+
+# mape
+(mape2 <- mape(ca_test$total_sales, tail(forecast2$yhat, 60)))
+```
+
+```{r}
+df.cv <- cross_validation(m2, initial=730, period=30, horizon=365, units='days')
+head(df.cv)
+```
+
+```{r}
+df.p <- performance_metrics(df.cv)
+head(df.p)
+```
+
+```{r}
+plot_cross_validation_metric(df.cv, metric='mape') +
+  ylim(0, 2.5)
+```
