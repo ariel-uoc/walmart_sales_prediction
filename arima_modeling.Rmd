@@ -1,0 +1,115 @@
+---
+title: "Arima_modeling"
+author: "Ariel Li, Jiaying Du, Sylvie Pan"
+date: "5/20/2020"
+output: html_document
+---
+
+```{r}
+# load packages
+suppressMessages({
+  library(dplyr)
+  library(tidyverse)
+  library(psych)
+  library(scales)
+  library(data.table)
+  library(fastDummies)
+  library(xts)
+  #library(reshape2)
+  #library(xtsExtra)
+  library(seasonal)
+  library(tseries)
+  #library(TSA)
+  library(lubridate)
+  library(ggplot2) 
+  library(ggthemes)
+  library(patchwork)
+  library(RColorBrewer)
+  library(hrbrthemes)
+  library(plotly)
+  library(forecast) 
+  library(prophet) 
+  library(tseries)
+  library(forecast)
+  library(Metrics)
+})
+
+set.seed(42)
+```
+
+```{r}
+train <- read_csv('data/ca_train.csv')
+test <-  read_csv('data/ca_test.csv')
+head(train)
+head(test)
+```
+
+```{r}
+# Data exploration 
+plot.ts(train$total_sales) # mean not stationary, seasonality observed 
+acf(train$total_sales) # doesn't die down, suggesting non-stationarity 
+pacf(train$total_sales) # not within significance limit, suggesting non-stationarity 
+```
+
+```{r}
+# Auto Arima Modeling 
+auto.mod <- auto.arima(train$total_sales,seasonal = TRUE)
+summary(auto.mod) #ARIMA(5,1,1), AICc=32818, BIC=32857  
+
+#Residual Analysis
+auto.res <- residuals(auto.mod)
+checkresiduals(auto.mod) 
+# ACF plot does not die down 
+kpss.test(auto.res) # p > 0.05, residuals are stationary 
+pacf(auto.res) # doesn't fall within the siginificance limit
+
+```
+```{r}
+# Random trials of Arima models with differnet p and q combinations 
+mod1 <- Arima(train$total_sales, order = c(5,1,2))
+summary(mod1) #AICc=32552, BIC=32597
+
+mod2 <- Arima(train$total_sales, order = c(6,1,2))
+summary(mod2) #AICc=32537, BIC=32587
+
+mod3 <- Arima(train$total_sales, order = c(6,1,1))
+summary(mod3) #AICc=32571, BIC=32615
+
+mod4 <- Arima(train$total_sales, order = c(6,1,3))
+summary(mod4) #AICc=32534, BIC=32589
+
+mod5 <- Arima(train$total_sales, order = c(5,1,4))
+summary(mod5) #AICc=32404, BIC=32459, best model by AICc and BIC 
+```
+```{r}
+library(fracdiff)
+# ARFIMA modeling 
+d <- fracdiff(train$total_sales) 
+st <- diffseries(train$total_sales, d$d) 
+acf(st) 
+arfima <- auto.arima(st)
+summary(arfima) #AICc=32922.17, BIC=32960.78. ARFIMA model has poorer performance than auto.arima model 
+```
+```{r}
+# Convert to time series data 
+train_ts <- ts(train$total_sales)
+mod514 <- Arima(train_ts, order = c(5,1,4))
+summary(mod514) 
+
+checkresiduals(mod514)
+pacf(residuals(mod514))
+
+mod514.fc <- forecast(mod514, h=60)
+plot(mod514.fc)
+mod514.fc
+
+(mod514.mase <- mase(test$total_sales, mod514.fc$mean))
+``` 
+
+# STL Decomposition 
+```{r}
+mstl.mod <- mstl(train_ts)
+autoplot(mstl.mod)
+summary(mstl.mod)
+```
+ 
